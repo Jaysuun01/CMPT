@@ -21,7 +21,7 @@ A verifier checked these against nodejs.org, nextjs.org, GitHub advisories and t
 
 | Package | Version | Why this one |
 |---|---|---|
-| Node (`.nvmrc`, `engines`) | 26.13.0 | Active LTS since 2026-10-28. v23 is end-of-life, and vitest 5 and jsdom both refuse to run on it. |
+| Node (`.nvmrc`, `engines`) | 26.13.0 | The current Active LTS. v23 is end-of-life, and vitest 5 and jsdom both refuse to run on it. |
 | next, eslint-config-next | 16.4.6 | Latest 16.x with no open advisories. 16.4.5 is the security floor. |
 | react, react-dom | 19.3.1 | Includes the RSC remote-code-execution fix |
 | typescript | 6.0.3 | TS 7 is outside typescript-eslint's peer range (<6.1), and its Next support is experimental |
@@ -73,7 +73,7 @@ Each module is pure TypeScript, written test-first.
 | 2.3 | `src/lib/data/load.ts` (server-only): read the 3 CSVs and line up their months | Real files load with 1,209 points each; mismatched months throw a clear error |
 | 2.4 | `src/lib/stats.ts`: `mom`, `yoy`, `volatility`, `change(from, to)`, `rebase`, `volatilityNorm` | Hand-worked expected values from the CSVs (MoM, YoY, volatility at known months); null for the first month and first 12 months; null when a window has a gap; YoY defined at the first month of a 5-year range |
 | 2.5 | `src/lib/chart.ts`: `niceTicks`, `scale`, `linePath` (gaps at nulls), `barRects`, `chartLabel` | Tick endpoints; path gaps; single-point path; aria-label text |
-| 2.6 | `src/lib/share.ts`: `summarySentence`, `toCsv` | Wording for rises and falls; preliminary note; CSV header and rows; the month range in the CSV |
+| 2.6 | `src/lib/share.ts`: `summarySentence`, `toCsv` (later removed, along with copy-link and CSV download) | Wording for rises and falls; preliminary note; CSV header and rows; the month range in the CSV |
 
 **Verifiers (two, independent):**
 - **A** recomputes a sample of stats straight from the CSVs, without reading our code.
@@ -108,9 +108,9 @@ Each module is pure TypeScript, written test-first.
 |---|---|
 | 4.1 | `HeroChart`: rebased comparison chart, mouse hover readout, arrow-key readout, `aria-live` text |
 | 4.2 | Volatility norm column in the results table |
-| 4.3 | `ShareBar`: copy sentence (with a fallback when the clipboard API is missing), copy link, CSV download (`Blob`) |
+| 4.3 | `ShareBar`: copy sentence (with a fallback when the clipboard API is missing), copy link, CSV download (`Blob`). Later removed; a link to a range still works through the URL. |
 
-**Component tests:** the hover and keyboard readouts; "Copied" appears both with and without `navigator.clipboard`; the CSV content.
+**Component tests:** the hover and keyboard readouts; "Copied" appears both with and without `navigator.clipboard`; the CSV content. (The copy and CSV tests went with the feature.)
 **Verifier:** a standard single review.
 
 ## Phase 5: End-to-end tests and hardening
@@ -120,8 +120,8 @@ Each module is pure TypeScript, written test-first.
 - custom months work
 - a `?from=&to=` URL restores the view
 - the back button restores the previous range
-- the CSV download fires
-- copy works (Chromium only)
+- the CSV download fires (removed with the feature)
+- copy works, Chromium only (removed with the feature)
 - no horizontal scroll at 390 px
 
 **Hardening:** `npm audit --omit=dev --audit-level=high` passes; the secrets grep passes; the CSP is clean on a production build.
@@ -208,18 +208,18 @@ It also covers these states:
 
 Buttons are disabled while a request is in flight. Everything renders as plain text, and links use `rel="noopener noreferrer"`. Component tests cover each state. A screenshot review is done at desktop and phone width, in light and dark mode. **Verifiers: two (LLM output rendering and security).**
 
-**6.6a Plan a purchase page.** The user found the first layout hard to use: it sat under the price charts, and the results were a long stack of text and tables. Redesign:
+**6.6a Plan a purchase page.** The first layout was hard to use: it sat under the price charts, and the results were a long stack of text and tables. Redesign:
 - Its own page, `/plan`, reached from a "Prices / Plan a purchase" tab in the header and a pointer section on the price page.
 - Three numbered steps: describe, check the details, your answer. A finished step folds to a one-line summary with an Edit button; reading a new description clears the old answer.
 - Each material leads with its answer and a dot chart: one dot per similar period at its break-even carrying cost, filled where buying early came out ahead, with a line at the user's rate. `/analyze` adds each period's rounded break-even rate (`breakEven.rates`, in the order of `similar`) for it. The tables, recent prices, what followed and the past event sit in a collapsed Details section.
 - One news list for all materials; other responses and the re-check line shown once.
-- Budgets shown with thousands separators; each phase on one line; "Try an example" fills a sample description.
+- Budgets shown with thousands separators; each phase on one line; "Try an example" fills a sample description (later removed).
 
 Component and E2E tests updated; screenshots reviewed at desktop and phone width, light and dark. **Verifier: one (UI and accessibility), plus the stats check of `rates`.**
 
 **6.7 E2E and accuracy check.**
 - `e2e/risk.spec.ts`: the happy path and the extract error, under `GEMINI_MOCK=1`.
-- `backend/eval/accuracy.ts`: hand-labeled cases for steps 1 and 3, including irrelevant articles and one injected article. It needs a key, so the user runs it, and the results go in the README.
+- `backend/eval/accuracy.ts`: hand-labeled cases for steps 1 and 3, including irrelevant articles and one injected article. It needs a key, so it is run by hand, and the results go in the README.
 
 **Milestone:** `npm run verify:full`, then a report to the user.
 

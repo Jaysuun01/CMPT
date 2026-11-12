@@ -1,0 +1,28 @@
+{
+  "name": "cmpt",
+  "private": true,
+  "description": "Construction material price tracker",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "engines": {
+    "node": ">=26.13.0"
+  },
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "lint": "npm run lint --workspaces",
+    "typecheck": "npm run typecheck --workspaces && tsc -p tsconfig.json",
+    "test": "npm run test --workspaces",
+    "test:e2e": "playwright test",
+    "verify": "npm run lint && npm run typecheck && npm test",
+    "verify:full": "npm run verify && npm run test:e2e && npm audit --omit=dev --audit-level=high",
+    "coverage": "npm run coverage -w backend && npm run coverage -w frontend"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "@types/node": "26.6.6",
+    "concurrently": "10.0.6",
+    "typescript": "6.0.3"
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "_note": "Fixed input for backend/eval/consistency.ts. The news items were saved from a real search run (sources dropped), so every advice run sees exactly the same news and numbers. Lumber and concrete have a supply-risk item; steel has price risks only.",
+  "today": "2026-11",
+  "description": "Clinic: concrete $350K needed April 2027, steel $600K and lumber $150K needed October 2027.",
+  "project": {
+    "materials": [
+      {
+        "material": "lumber",
+        "budget": 150000
+      },
+      {
+        "material": "steel",
+        "budget": 600000
+      },
+      {
+        "material": "concrete",
+        "budget": 350000
+      }
+    ],
+    "phases": [
+      {
+        "needMonth": "2027-04"
+      },
+      {
+        "needMonth": "2027-10"
+      }
+    ],
+    "carryingCost": 1,
+    "window": "1970"
+  },
+  "news": [
+    {
+      "devId": 1,
+      "material": "lumber",
+      "risk": "price",
+      "eventId": "softwood-duties-2017",
+      "summary": "The Department of Commerce lowered the combined antidumping and countervailing duties on Canadian softwood lumber from roughly 35 percent to 24.75 percent"
+    },
+    {
+      "devId": 2,
+      "material": "lumber",
+      "risk": "both",
+      "eventId": "softwood-duties-2017",
+      "summary": "However, a separate 10 percent tariff on timber and softwood lumber under Section 232 remains active, alongside additional trade duties on Canadian engineered wood and panel products like plywood and particleboard, sustaining longer lead times and higher input costs across lumber and wood products"
+    },
+    {
+      "devId": 3,
+      "material": "steel",
+      "risk": "price",
+      "eventId": "steel-232-2018",
+      "summary": "Section 232 tariffs maintain a 50 percent duty rate on imported raw steel mill products, while derivative steel items carry a 25 percent tariff rate"
+    },
+    {
+      "devId": 4,
+      "material": "steel",
+      "risk": "price",
+      "eventId": "steel-232-2018",
+      "summary": "Trade negotiations regarding steel tariff reductions between the U.S. and key trading partners collapsed without an agreement, preserving high trade barriers and price pressures on structural iron and steel products"
+    },
+    {
+      "devId": 5,
+      "material": "concrete",
+      "risk": "availability",
+      "eventId": "none",
+      "summary": "Concurrently, component delays for kiln maintenance and ongoing equipment lead-time issues at domestic processing plants are constraining production capacity for concrete products, cement, and aggregates"
+    }
+  ]
+}

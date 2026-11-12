@@ -1,0 +1,27 @@
+{
+  "retrievedOn": "2026-11-09",
+  "preliminaryMonths": 4,
+  "series": [
+    {
+      "id": "WPU101",
+      "key": "steel",
+      "name": "Iron and steel",
+      "title": "Producer Price Index by Commodity: Metals and Metal Products: Iron and Steel",
+      "file": "WPU101.csv"
+    },
+    {
+      "id": "WPU08",
+      "key": "lumber",
+      "name": "Lumber and wood",
+      "title": "Producer Price Index by Commodity: Lumber and Wood Products",
+      "file": "WPU08.csv"
+    },
+    {
+      "id": "WPU133",
+      "key": "concrete",
+      "name": "Concrete products",
+      "title": "Producer Price Index by Commodity: Nonmetallic Mineral Products: Concrete Products",
+      "file": "WPU133.csv"
+    }
+  ]
+}

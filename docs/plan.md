@@ -1,14 +1,14 @@
 # Build plan: everything except the LLM feature
 
-**Approved design:** https://claude.ai/artifact/6doD3kxqmBmrY8vJWNPowQ. This plan ports that prototype to Next.js.
+**Design:** this plan ports the approved HTML prototype to Next.js.
 
 **Rules:** CLAUDE.md applies throughout: minimal code, tests at every level, subagent verification.
 
-**Plan review (verifier):** must-fixes 1–4 and should-fixes 5–9 are folded in below.
+**Plan review:** an independent review's must-fixes (1–4) and should-fixes (5–9) are folded in below.
 
 ## Architecture
 
-> **Update: split into `backend/` and `frontend/` (user request).** Express 5 serves the cleaned data and stats.
+> **Update: split into `backend/` and `frontend/`.** Express 5 serves the cleaned data and stats.
 >
 > - **Moved to the backend:** parse, load and stats, plus the data files (`backend/data/`).
 > - **Moved to the frontend:** months, chart and share helpers, and the UI.

@@ -40,7 +40,7 @@ These rules apply to every Claude Code session in this repo and take priority ov
 - **Volatility** = sample standard deviation (n−1) of the last 12 MoM % values. It is not annualized. It needs 13 months of levels, so it's undefined for the first 12 months.
 - Any missing value inside a calculation window makes that result undefined. Never interpolate.
 
-**The AI feature design is still undecided.** Do not build any LLM feature until the user confirms the design.
+**AI feature:** the Material Risk Check on the Plan a purchase page, specified in `docs/ai-feature.md`. Changes to its design need the owner's approval.
 
 **Priority when time is short:**
 1. data + stats
@@ -192,8 +192,6 @@ The app isn't deployed, but these rules still apply in full.
 5. **Re-verify only if a fix changed logic.**
 6. **Use two independent verifiers** for stats formulas, security-sensitive code, and LLM input/output handling. Compare their findings.
 7. **Tell the user briefly** what was checked, what was found, and what changed.
-
-If the process puts the user's self-set timeline at risk, tell the user and ask before skipping any step.
 
 ## 7. Working process
 

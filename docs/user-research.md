@@ -61,7 +61,7 @@ The brief's required charts stay the main deliverable: index, MoM, YoY and volat
    - They are not seasonally adjusted, so YoY is the cleaner trend.
 7. **A one-line latest-month strip** at the top. *(Job C, hypothesis; it's cheap)*
 
-**Proposals, not research.** Build these only if the user agrees (CLAUDE.md §3):
+**Proposals, not research.** Built only where a later design decision called for them (CLAUDE.md §3):
 - copy-summary sentence *(job D)*
 - shareable link with the months in the URL *(job D)*
 - CSV download *(spreadsheet users, hypothesis)*
