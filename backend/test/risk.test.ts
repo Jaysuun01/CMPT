@@ -4,15 +4,44 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import { createApp } from "../src/app.ts";
 import { loadDataset } from "../src/data/load.ts";
-import { CALL_TIMEOUT_MS, MAX_SUMMARY, MAX_TOKENS, safeUrl } from "../src/risk/gemini.ts";
+import { AREAS, CALL_TIMEOUT_MS, MAX_DEVELOPMENTS, MAX_PER_MATERIAL, MAX_SUMMARY, MAX_TOKENS, safeUrl, type Models } from "../src/risk/gemini.ts";
 import { mockDrivers } from "../src/risk/mock.ts";
-import { AI_LIMIT_PER_HOUR, AI_LIMIT_PER_MINUTE, NEWS_KEPT, NEWS_TIMEOUT_MS, NEWS_TTL_MS, riskRouter } from "../src/risk/routes.ts";
+import { AI_LIMIT_PER_HOUR, AI_LIMIT_PER_MINUTE, NEWS_KEPT, NEWS_LIMIT_PER_HOUR, NEWS_TIMEOUT_MS, NEWS_TTL_MS, riskRouter } from "../src/risk/routes.ts";
 
 // The SDK module is mocked: requests are inspected and replies are raw response objects (CLAUDE.md §4).
-const sdk = vi.hoisted(() => ({ generateContent: vi.fn(), apiKey: "", options: {} as Record<string, unknown> }));
+// One news check runs six area searches at once. They share one queued reply, as "the search returned X", so each
+// test queues one search reply then the classify reply; `searches` records every search prompt.
+const sdk = vi.hoisted(() => {
+  const s = {
+    generateContent: vi.fn(),
+    apiKey: "",
+    options: {} as Record<string, unknown>,
+    searches: [] as string[],
+    batch: null as { key: string; result: Promise<unknown> } | null,
+    models: { generateContent: (p: { contents: string; config?: { tools?: unknown } }) => route(p) },
+  };
+  function route(p: { contents: string; config?: { tools?: unknown } }) {
+    if (!p.config?.tools) {
+      s.batch = null;
+      return s.generateContent(p);
+    }
+    s.searches.push(p.contents);
+    const key = p.contents.replace(/\nFind recent developments about[\s\S]*$/, "");
+    if (s.batch?.key === key) return s.batch.result;
+    const result = Promise.resolve().then(() => s.generateContent(p));
+    const batch = { key, result };
+    s.batch = batch;
+    // The six searches start in the same tick; a later request starts a new batch.
+    setTimeout(() => {
+      if (s.batch === batch) s.batch = null;
+    }, 0);
+    return result;
+  }
+  return s;
+});
 vi.mock("@google/genai", () => ({
   GoogleGenAI: class {
-    models = { generateContent: sdk.generateContent };
+    models = sdk.models;
     constructor(options: { apiKey: string }) {
       sdk.apiKey = options.apiKey;
       sdk.options = options;
@@ -82,6 +111,8 @@ const PROJECT = {
 let logs: string[];
 beforeEach(() => {
   sdk.generateContent.mockReset();
+  sdk.searches = [];
+  sdk.batch = null;
   logs = [];
   vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => void logs.push(args.map(String).join(" ")));
 });
@@ -90,14 +121,14 @@ afterEach(() => vi.restoreAllMocks());
 describe("GET /api/risk/status", () => {
   it("reports the AI as available with a key or in mock mode, and never sends the key", async () => {
     const res = await request(app()).get("/api/risk/status");
-    expect(res.body).toEqual({ aiAvailable: true });
+    expect(res.body).toEqual({ aiAvailable: true, demo: false });
     expect(JSON.stringify(res.body)).not.toContain("test-key");
-    expect((await request(app({ GEMINI_MOCK: "1" })).get("/api/risk/status")).body).toEqual({ aiAvailable: true });
+    expect((await request(app({ GEMINI_MOCK: "1" })).get("/api/risk/status")).body).toEqual({ aiAvailable: true, demo: true });
   });
 
   it("reports it unavailable without a key", async () => {
-    expect((await request(app({})).get("/api/risk/status")).body).toEqual({ aiAvailable: false });
-    expect((await request(app({ GEMINI_API_KEY: "  " })).get("/api/risk/status")).body).toEqual({ aiAvailable: false });
+    expect((await request(app({})).get("/api/risk/status")).body).toEqual({ aiAvailable: false, demo: false });
+    expect((await request(app({ GEMINI_API_KEY: "  " })).get("/api/risk/status")).body).toEqual({ aiAvailable: false, demo: false });
   });
 });
 
@@ -272,12 +303,29 @@ describe("POST /api/risk/extract", () => {
 });
 
 describe("POST /api/risk/news", () => {
+  it("runs one search per area, weather included, and accepts the weather topic", async () => {
+    sdk.generateContent
+      .mockResolvedValueOnce(searchReply(CHUNKS))
+      .mockResolvedValueOnce(json({ entries: [{ ...CLASSIFIED.entries[0], topic: "weather" }] }));
+    const res = await request(app()).post("/api/risk/news").send(NEWS);
+    expect(res.status).toBe(200);
+    expect(res.body.developments[0].topic).toBe("weather");
+    expect(sdk.searches).toHaveLength(6);
+    for (const area of Object.values(AREAS)) expect(sdk.searches.filter((c) => c.includes(`about ${area} that affect`))).toHaveLength(1);
+    expect(sdk.searches.some((c) => c.includes("weather and natural disasters: hurricanes, floods, wildfires, drought and extreme cold"))).toBe(true);
+    expect(res.body.areas).toEqual({ trade: "ok", shipping: "ok", energy: "ok", weather: "ok", production: "ok", conflict: "ok" });
+    const classifyCall = allParams()[1];
+    // The classifier is told to pick weather when weather is the cause, so it doesn't blur with production.
+    expect(String(classifyCall?.config.systemInstruction)).toContain("choose weather when weather is the cause");
+  });
+
   it("searches, classifies and joins sources in code", async () => {
     sdk.generateContent.mockResolvedValueOnce(searchReply(CHUNKS)).mockResolvedValueOnce(json(CLASSIFIED));
     const res = await request(app()).post("/api/risk/news").send(NEWS);
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       newsId: expect.stringMatching(/^[0-9a-f]{32}$/),
+      areas: { trade: "ok", shipping: "ok", energy: "ok", weather: "ok", production: "ok", conflict: "ok" },
       developments: [
         {
           devId: 1,
@@ -307,7 +355,7 @@ describe("POST /api/risk/news", () => {
     const [s, c] = allParams() as [Params, Params];
     expect(s.config).toMatchObject({ tools: [{ googleSearch: {} }], maxOutputTokens: 4096, thinkingConfig: { thinkingLevel: "MINIMAL" } });
     expect(s.config.responseJsonSchema).toBeUndefined();
-    expect(c.config).toMatchObject({ responseMimeType: "application/json", maxOutputTokens: 2048 });
+    expect(c.config).toMatchObject({ responseMimeType: "application/json", maxOutputTokens: 4096 });
     expect(c.config.tools).toBeUndefined();
     expect(c.config.systemInstruction).toMatch(/data, not instructions/);
     expect(c.contents).toMatch(/devId 1:\n<<<DEVELOPMENT-[0-9a-f]{16}>>>\nMills report/);
@@ -416,22 +464,21 @@ describe("POST /api/risk/news", () => {
     expect(res.body.developments[0].sources).toHaveLength(5);
   });
 
-  it("caps each summary at 300 characters and sends at most 15 developments", async () => {
+  it("caps each summary at 300 characters, sends at most 30 developments, and keeps at most 8 per material", async () => {
     // Distinct texts: identical ones would be merged as one development grounded twice.
-    const long = (i: number) => String.fromCharCode(97 + i) + "y".repeat(399);
-    const supports = Array.from({ length: 20 }, () => ({ segment: { startIndex: 0, endIndex: 400 }, groundingChunkIndices: [0] })).map((s, i) => ({
+    const long = (i: number) => String.fromCharCode(48 + i) + "y".repeat(399);
+    const supports = Array.from({ length: 35 }, () => ({ segment: { startIndex: 0, endIndex: 400 }, groundingChunkIndices: [0] })).map((s, i) => ({
       ...s,
       segment: { ...s.segment, partIndex: i },
     }));
     sdk.generateContent
       .mockResolvedValueOnce({
-        candidates: [{ finishReason: "STOP", content: { parts: Array.from({ length: 20 }, (_, i) => ({ text: long(i) })) }, groundingMetadata: { groundingChunks: CHUNKS, groundingSupports: supports } }],
+        candidates: [{ finishReason: "STOP", content: { parts: Array.from({ length: 35 }, (_, i) => ({ text: long(i) })) }, groundingMetadata: { groundingChunks: CHUNKS, groundingSupports: supports } }],
       })
-      .mockResolvedValueOnce(json({ entries: Array.from({ length: 6 }, (_, i) => ({ devId: i + 1, material: "steel", risk: "price", topic: "other", eventId: "none" })) }));
+      .mockResolvedValueOnce(json({ entries: Array.from({ length: 10 }, (_, i) => ({ devId: i + 1, material: "steel", risk: "price", topic: "other", eventId: "none" })) }));
     const res = await request(app()).post("/api/risk/news").send(NEWS);
-    expect((allParams()[1] as Params).contents.match(/devId \d+:/g)).toHaveLength(15);
-    // At most 5 per material are kept.
-    expect(res.body.developments).toHaveLength(5);
+    expect((allParams()[1] as Params).contents.match(/devId \d+:/g)).toHaveLength(MAX_DEVELOPMENTS);
+    expect(res.body.developments).toHaveLength(MAX_PER_MATERIAL);
     expect(res.body.developments[0].summary).toHaveLength(MAX_SUMMARY);
     expect(res.body.developments[0].summary.endsWith("…")).toBe(true);
   });
@@ -454,15 +501,24 @@ describe("POST /api/risk/news", () => {
     ["a duplicate devId", { entries: [CLASSIFIED.entries[0], CLASSIFIED.entries[0]] }],
     ["an event id not in the curated list", { entries: [{ ...CLASSIFIED.entries[0], eventId: "made-up-2024" }] }],
     ["an unknown risk", { entries: [{ ...CLASSIFIED.entries[0], risk: "doom" }] }],
-    ["an unknown topic", { entries: [{ ...CLASSIFIED.entries[0], topic: "weather" }] }],
+    ["an unknown topic", { entries: [{ ...CLASSIFIED.entries[0], topic: "astrology" }] }],
     ["a missing topic", { entries: [{ devId: 1, material: "steel", risk: "price", eventId: "none" }] }],
     ["an unknown field", { entries: [{ ...CLASSIFIED.entries[0], summary: "rewritten" }] }],
-    ["more than 15 entries", { entries: Array.from({ length: 16 }, (_, i) => ({ devId: i + 1, material: "steel", risk: "price", topic: "other", eventId: "none" })) }],
+    ["entries for devIds that were never sent", { entries: Array.from({ length: 16 }, (_, i) => ({ devId: i + 1, material: "steel", risk: "price", topic: "other", eventId: "none" })) }],
   ])("hides the news when classify returns %s", async (_name, body) => {
     sdk.generateContent.mockResolvedValueOnce(searchReply(CHUNKS)).mockResolvedValueOnce(json(body));
     const res = await request(app()).post("/api/risk/news").send(NEWS);
     expect(res.status).toBe(502);
     expect(res.body).toEqual({ error: "News couldn't be checked.", step: "classify" });
+  });
+
+  it("rejects a classify reply with more than 30 entries on the schema's own cap, before checking ids", async () => {
+    sdk.generateContent
+      .mockResolvedValueOnce(searchReply(CHUNKS))
+      .mockResolvedValueOnce(json({ entries: Array.from({ length: MAX_DEVELOPMENTS + 1 }, (_, i) => ({ devId: i + 1, material: "steel", risk: "price", topic: "other", eventId: "none" })) }));
+    const res = await request(app()).post("/api/risk/news").send(NEWS);
+    expect(res.status).toBe(502);
+    expect(logs.map((l) => JSON.parse(l)).find((l) => l.step === "classify")?.code).toBe("schema");
   });
 
   it.each([
@@ -517,14 +573,15 @@ describe("limits are the design's numbers", () => {
   it("pins the timeouts, token caps and AI rate limits", () => {
     expect(CALL_TIMEOUT_MS).toBe(12_000);
     expect(NEWS_TIMEOUT_MS).toBe(25_000);
-    expect(MAX_TOKENS).toEqual({ extract: 2048, search: 4096, classify: 2048, advise: 2048 });
+    expect(MAX_TOKENS).toEqual({ extract: 2048, search: 4096, classify: 4096, advise: 2048 });
+    expect([MAX_DEVELOPMENTS, MAX_PER_MATERIAL]).toEqual([30, 8]);
     expect([AI_LIMIT_PER_MINUTE, AI_LIMIT_PER_HOUR]).toEqual([5, 30]);
   });
 
   it("applies the hourly AI limit as well as the per-minute one", async () => {
     sdk.generateContent.mockResolvedValue(json(EXTRACTED));
-    const client = { models: { generateContent: sdk.generateContent }, timeoutMs: 1000 };
-    const a = express().use(express.json()).use("/r", riskRouter(dataset, { client, today: () => 2026 * 12 + 10, aiLimits: { perMinute: 100, perHour: 3 }, drivers: mockDrivers }));
+    const client = { models: sdk.models as unknown as Models, timeoutMs: 1000 };
+    const a = express().use(express.json()).use("/r", riskRouter(dataset, { client, today: () => 2026 * 12 + 10, aiLimits: { perMinute: 100, perHour: 3, newsPerHour: 1000 }, drivers: mockDrivers }));
     for (let i = 0; i < 3; i++) expect((await request(a).post("/r/extract").send({ description: "x" })).status).toBe(200);
     expect((await request(a).post("/r/extract").send({ description: "x" })).status).toBe(429);
   });
@@ -659,6 +716,7 @@ describe("each news step fails cleanly", () => {
   it("times out search and classify each on their own clock", async () => {
     sdk.generateContent.mockImplementationOnce(hang);
     const search = await request(app(KEY, { callMs: 30, newsMs: 5000 })).post("/api/risk/news").send(NEWS);
+    await new Promise((r) => setTimeout(r, 1));
     expect(search.body.step).toBe("search");
     sdk.generateContent.mockResolvedValueOnce(searchReply(CHUNKS)).mockImplementationOnce(hang);
     const classify = await request(app(KEY, { callMs: 30, newsMs: 5000 })).post("/api/risk/news").send(NEWS);
@@ -913,10 +971,10 @@ describe("POST /api/risk/advise", () => {
 
   it("rejects an unknown or expired news id with 409", async () => {
     let t = 0;
-    const client = { models: { generateContent: sdk.generateContent }, timeoutMs: 1000 };
+    const client = { models: sdk.models as unknown as Models, timeoutMs: 1000 };
     const a = express()
       .use(express.json())
-      .use("/r", riskRouter(dataset, { client, today: () => 2026 * 12 + 10, aiLimits: { perMinute: 100, perHour: 100 }, drivers: mockDrivers, now: () => t }));
+      .use("/r", riskRouter(dataset, { client, today: () => 2026 * 12 + 10, aiLimits: { perMinute: 100, perHour: 100, newsPerHour: 1000 }, drivers: mockDrivers, now: () => t }));
     expect((await request(a).post("/r/advise").send({ project: PROJECT, newsId: "0".repeat(32), exclude: [] })).status).toBe(409);
     sdk.generateContent.mockResolvedValueOnce(searchReply(CHUNKS)).mockResolvedValueOnce(json(CLASSIFIED));
     const { newsId } = (await request(a).post("/r/news").send(NEWS)).body;
@@ -925,10 +983,10 @@ describe("POST /api/risk/advise", () => {
   });
 
   it("keeps at most NEWS_KEPT news results, dropping the oldest", async () => {
-    const client = { models: { generateContent: sdk.generateContent }, timeoutMs: 1000 };
+    const client = { models: sdk.models as unknown as Models, timeoutMs: 1000 };
     const a = express()
       .use(express.json())
-      .use("/r", riskRouter(dataset, { client, today: () => 2026 * 12 + 10, aiLimits: { perMinute: 1000, perHour: 1000 }, drivers: mockDrivers }));
+      .use("/r", riskRouter(dataset, { client, today: () => 2026 * 12 + 10, aiLimits: { perMinute: 1000, perHour: 1000, newsPerHour: 1000 }, drivers: mockDrivers }));
     const ids: string[] = [];
     for (let i = 0; i <= NEWS_KEPT; i++) {
       sdk.generateContent.mockResolvedValueOnce(searchReply(CHUNKS)).mockResolvedValueOnce(json({ entries: [] }));
@@ -945,7 +1003,7 @@ describe("POST /api/risk/advise", () => {
       { project: PROJECT, newsId: "abc", exclude: [] },
       { project: PROJECT, newsId: "0".repeat(32), exclude: [], developments: [{ summary: "x" }] },
       { project: { ...PROJECT, carryingCost: -1 }, newsId: "0".repeat(32), exclude: [] },
-      { project: PROJECT, newsId: "0".repeat(32), exclude: Array.from({ length: 16 }, (_, i) => i + 1) },
+      { project: PROJECT, newsId: "0".repeat(32), exclude: Array.from({ length: 31 }, (_, i) => i + 1) },
     ]) {
       expect((await request(a).post("/api/risk/advise").send(body)).status).toBe(400);
     }
@@ -978,10 +1036,10 @@ describe("POST /api/risk/advise", () => {
   });
 
   it("shares the AI rate limit with extract and news", async () => {
-    const client = { models: { generateContent: sdk.generateContent }, timeoutMs: 1000 };
+    const client = { models: sdk.models as unknown as Models, timeoutMs: 1000 };
     const a = express()
       .use(express.json())
-      .use("/r", riskRouter(dataset, { client, today: () => 2026 * 12 + 10, aiLimits: { perMinute: 2, perHour: 100 }, drivers: mockDrivers }));
+      .use("/r", riskRouter(dataset, { client, today: () => 2026 * 12 + 10, aiLimits: { perMinute: 2, perHour: 100, newsPerHour: 1000 }, drivers: mockDrivers }));
     sdk.generateContent.mockResolvedValueOnce(json(EXTRACTED)).mockResolvedValueOnce(searchReply(CHUNKS)).mockResolvedValueOnce(json(CLASSIFIED));
     await request(a).post("/r/extract").send({ description: "x" });
     const { newsId } = (await request(a).post("/r/news").send(NEWS)).body;
@@ -1012,11 +1070,94 @@ describe("POST /api/risk/analyze failures", () => {
     const broken = { ...dataset, series: dataset.series.filter((x) => x.key !== "steel") };
     const a = express()
       .use(express.json())
-      .use("/r", riskRouter(broken, { client: null, today: () => 2026 * 12 + 10, aiLimits: { perMinute: 100, perHour: 100 }, drivers: mockDrivers }));
+      .use("/r", riskRouter(broken, { client: null, today: () => 2026 * 12 + 10, aiLimits: { perMinute: 100, perHour: 100, newsPerHour: 1000 }, drivers: mockDrivers }));
     const res = await request(a).post("/r/analyze").send(PROJECT);
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: "Something went wrong" });
     expect(logs.join(" ")).toContain('"route":"analyze"');
     expect(logs.join(" ")).not.toContain("2000000");
+  });
+});
+
+describe("News search covers every area", () => {
+  // A client that answers each area's search on its own, bypassing the shared-reply mock above.
+  const areaOf = (contents: string) => (Object.keys(AREAS) as (keyof typeof AREAS)[]).find((a) => contents.includes(`about ${AREAS[a]} that affect`));
+  const spanReply = (texts: string[]) => {
+    let text = "";
+    const supports = texts.map((t) => {
+      const start = Buffer.byteLength(text);
+      text += `${t} `;
+      return { segment: { startIndex: start, endIndex: start + Buffer.byteLength(t) }, groundingChunkIndices: [0] };
+    });
+    return reply(text.trimEnd(), { groundingMetadata: { groundingChunks: CHUNKS, groundingSupports: supports } });
+  };
+  function routerWith(search: (area: string) => unknown, classifyEntries: (contents: string) => unknown[]) {
+    const generateContent = vi.fn(async (p: Params) => {
+      if (p.config.tools) {
+        const r = search(areaOf(p.contents) as string);
+        if (r instanceof Error) throw r;
+        return r;
+      }
+      return json({ entries: classifyEntries(p.contents) });
+    });
+    const client = { models: { generateContent } as unknown as Models, timeoutMs: 1000 };
+    const a = express()
+      .use(express.json())
+      .use("/r", riskRouter(dataset, { client, today: () => 2026 * 12 + 10, aiLimits: { perMinute: 100, perHour: 100, newsPerHour: 1000 }, drivers: mockDrivers }));
+    return { a, generateContent };
+  }
+  const idsIn = (contents: string) => [...contents.matchAll(/devId (\d+):\n<<<[^>]+>>>\n([^\n]*)/g)].map(([, id, text]) => ({ id: Number(id), text: text as string }));
+
+  it("keeps the other areas when one area's search fails, reports which one failed, and logs it by field only", async () => {
+    const { a } = routerWith(
+      (area) => (area === "conflict" ? Object.assign(new Error("boom"), { status: 500 }) : spanReply([`Steel ${area} news item for the project materials.`])),
+      (c) => idsIn(c).map(({ id }) => ({ devId: id, material: "steel", risk: "price", topic: "other", eventId: "none" })),
+    );
+    const res = await request(a).post("/r/news").send(NEWS);
+    expect(res.status).toBe(200);
+    expect(res.body.areas).toEqual({ trade: "ok", shipping: "ok", energy: "ok", weather: "ok", production: "ok", conflict: "failed" });
+    expect(res.body.developments.map((d: { summary: string }) => d.summary)).toContain("Steel weather news item for the project materials.");
+    const line = logs.map((l) => JSON.parse(l)).find((l) => l.area === "conflict");
+    expect(line).toMatchObject({ route: "news", step: "search", area: "conflict", code: "Error", status: 500 });
+    expect(logs.join(" ")).not.toContain("news item");
+  });
+
+  it("limits news checks to their own hourly cap, since each is six searches", async () => {
+    const capped = express()
+      .use(express.json())
+      .use("/r", riskRouter(dataset, { client: { models: { generateContent: vi.fn(async (p: Params) => (p.config.tools ? spanReply([]) : json({ entries: [] }))) } as unknown as Models, timeoutMs: 1000 }, today: () => 2026 * 12 + 10, aiLimits: { perMinute: 100, perHour: 100, newsPerHour: 2 }, drivers: mockDrivers }));
+    expect((await request(capped).post("/r/news").send(NEWS)).status).toBe(200);
+    expect((await request(capped).post("/r/news").send(NEWS)).status).toBe(200);
+    expect((await request(capped).post("/r/news").send(NEWS)).status).toBe(429);
+    expect(NEWS_LIMIT_PER_HOUR).toBe(10);
+  });
+
+  it("fails the step only when every area's search fails", async () => {
+    const { a } = routerWith(() => Object.assign(new Error("no search"), { status: 400 }), () => []);
+    const res = await request(a).post("/r/news").send(NEWS);
+    expect(res.status).toBe(502);
+    expect(res.body).toEqual({ error: "News couldn't be checked.", step: "search" });
+  });
+
+  it("merges areas in turns, so a busy area can't crowd a quieter one out of the overall cap", async () => {
+    const { a, generateContent } = routerWith(
+      (area) => (area === "trade" ? spanReply(Array.from({ length: 40 }, (_, i) => `Tariff story number ${String.fromCharCode(65 + (i % 26))}${i} about steel imports.`)) : area === "weather" ? spanReply(["A hurricane shut a Gulf Coast steel mill for two weeks."]) : spanReply([])),
+      () => [],
+    );
+    await request(a).post("/r/news").send(NEWS);
+    const sent = idsIn(String((generateContent.mock.calls.find((c) => !c[0].config.tools)?.[0] as Params).contents));
+    expect(sent).toHaveLength(MAX_DEVELOPMENTS);
+    expect(sent.map((d) => d.text)).toContain("A hurricane shut a Gulf Coast steel mill for two weeks.");
+  });
+
+  it("keeps a mix of topics for a material over its cap, not just the first items", async () => {
+    const texts = [...Array.from({ length: 10 }, (_, i) => `Steel tariff story ${String.fromCharCode(65 + i)} raised import costs again.`), "A wildfire slowed steel deliveries in the West."];
+    const { a } = routerWith(
+      (area) => (area === "trade" ? spanReply(texts) : spanReply([])),
+      (c) => idsIn(c).map(({ id, text }) => ({ devId: id, material: "steel", risk: text.includes("wildfire") ? "availability" : "price", topic: text.includes("wildfire") ? "weather" : "trade", eventId: "none" })),
+    );
+    const res = await request(a).post("/r/news").send(NEWS);
+    expect(res.body.developments).toHaveLength(MAX_PER_MATERIAL);
+    expect(res.body.developments.map((d: { topic: string }) => d.topic)).toContain("weather");
   });
 });

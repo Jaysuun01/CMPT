@@ -7,7 +7,7 @@
     "frontend"
   ],
   "engines": {
-    "node": ">=26.13.0"
+    "node": "^24.15.0 || >=26.0.0"
   },
   "scripts": {
     "dev": "concurrently -n api,web -c blue,green \"npm run dev -w backend\" \"npm run dev -w frontend\"",
@@ -17,7 +17,8 @@
     "test:e2e": "playwright test",
     "verify": "npm run lint && npm run typecheck && npm test",
     "verify:full": "npm run verify && npm run test:e2e && npm audit --omit=dev --audit-level=high",
-    "coverage": "npm run coverage -w backend && npm run coverage -w frontend"
+    "coverage": "npm run coverage -w backend && npm run coverage -w frontend",
+    "demo": "GEMINI_MOCK=1 npm run dev"
   },
   "devDependencies": {
     "@playwright/test": "1.65.0",

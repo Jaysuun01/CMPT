@@ -53,6 +53,10 @@ function parse(s: string): number | null {
 
 const money = (x: number) => x.toLocaleString("en-US", { maximumFractionDigits: 2 });
 
+/** The sample project the demo's AI always reads (backend/src/risk/mock.ts EXTRACTED). */
+const DEMO_DESCRIPTION =
+  "A 3-building apartment complex, one building starting every 6 months from March 2027. Lumber about $2M, concrete $800K and steel $200K, split evenly across the buildings.";
+
 /** The description folded to about two lines, cut at a word. */
 const excerpt = (s: string) => (s.length <= 200 ? s : `${s.slice(0, s.lastIndexOf(" ", 200) > 0 ? s.lastIndexOf(" ", 200) : 200)}…`);
 
@@ -107,6 +111,7 @@ export function RiskCheck() {
 /** The three-step check: describe, confirm the details, then the answer. Holds all of the page's state. */
 function PlanCheck({ restarted, onStartOver }: { restarted: boolean; onStartOver: () => void }) {
   const [ai, setAi] = useState<boolean | null>(null);
+  const [demo, setDemo] = useState(false);
   const [events, setEvents] = useState<PastEventOption[]>([]);
   const [description, setDescription] = useState("");
   const [reading, setReading] = useState(false);
@@ -151,6 +156,9 @@ function PlanCheck({ restarted, onStartOver }: { restarted: boolean; onStartOver
 
   useEffect(() => {
     getStatus().then((r) => {
+      setDemo(r.ok && r.data.demo);
+      // In the demo the AI always reads the sample project, so show that project's description, ready to read.
+      if (r.ok && r.data.demo) setDescription((d) => d || DEMO_DESCRIPTION);
       setAi(r.ok && r.data.aiAvailable);
       if (!(r.ok && r.data.aiAvailable)) setShowForm(true);
     });
@@ -265,9 +273,10 @@ function PlanCheck({ restarted, onStartOver }: { restarted: boolean; onStartOver
     if (newsResult) {
       excluded = new Set();
       if (newsResult.ok) {
-        newsKey.current = key;
+        // A news check with an area that couldn't be searched is redone on the next run, as the page promises.
+        newsKey.current = Object.values(newsResult.data.areas).includes("failed") ? null : key;
         newsId.current = newsResult.data.newsId;
-        newsNow = { state: "ok", developments: newsResult.data.developments };
+        newsNow = { state: "ok", developments: newsResult.data.developments, areas: newsResult.data.areas };
         setNews(newsNow);
         // Default each material's past event to its first development's match; the user's own choice still wins.
         const defaults: Partial<Record<Material, string>> = {};
@@ -624,6 +633,12 @@ function PlanCheck({ restarted, onStartOver }: { restarted: boolean; onStartOver
       <h1 ref={titleRef} tabIndex={-1}>
         Plan a purchase
       </h1>
+      {demo && (
+        <p className="demo-note">
+          <strong>Demo mode:</strong> click <strong>Read the description</strong>, then <strong>Run the check</strong> to see the whole flow. The AI steps and the
+          energy and freight costs use fixed sample data (this sample project and sample news), not live results. The price analysis uses the real data.
+        </p>
+      )}
       <p className="risk-lede">
         Should you buy materials now, or as each phase of the project needs them? This compares today&apos;s prices with similar past periods, checks current
         supply-chain news, and shows when buying early would have paid off. It shows what happened before, not a forecast.

@@ -15,6 +15,8 @@ import { adviseBody, analyzeBody, ExtractBody, issues, newsBody, toPhases, WINDO
 export const AI_LIMIT_PER_MINUTE = 5;
 /** Hourly cap on the same bucket, so a stuck client can't spend the whole day's quota. */
 export const AI_LIMIT_PER_HOUR = 30;
+/** Hourly cap on news checks alone: each is six billed searches plus a classify call, so this bounds search spend at 60 an hour. */
+export const NEWS_LIMIT_PER_HOUR = 10;
 /** Overall budget for one /news request (search, then classify), under the frontend proxy's 30 s limit. */
 export const NEWS_TIMEOUT_MS = 25_000;
 // /news results kept for /advise, so the client never sends news text back (docs/ai-feature.md, "Advice").
@@ -27,8 +29,10 @@ interface RiskOptions {
   client: Client | null;
   /** Today's month number, from the server clock (or fixed in mock mode). */
   today: () => number;
+  /** True with GEMINI_MOCK=1: the AI steps answer from fixed fixtures, and the page says so. */
+  demo?: boolean;
   /** Raised in mock mode so E2E can't hit the limit. */
-  aiLimits: { perMinute: number; perHour: number };
+  aiLimits: { perMinute: number; perHour: number; newsPerHour: number };
   newsTimeoutMs?: number;
   /** FRED energy and freight series; fixtures in mock mode. */
   drivers: DriverSource;
@@ -54,14 +58,14 @@ function log(route: string, started: number, err: unknown) {
 }
 
 /** A rate limiter with one shared key, since every request reaches the API from 127.0.0.1. */
-function limiter(windowMs: number, limit: number) {
+function limiter(windowMs: number, limit: number, key = "ai") {
   return rateLimit({
     windowMs,
     limit,
     standardHeaders: "draft-8",
     legacyHeaders: false,
     // Every request arrives from 127.0.0.1 through the frontend proxy, so this is one shared bucket.
-    keyGenerator: () => "ai",
+    keyGenerator: () => key,
     message: { error: "Too many requests" },
   });
 }
@@ -70,8 +74,10 @@ function limiter(windowMs: number, limit: number) {
 export function riskRouter(dataset: Dataset, options: RiskOptions) {
   const router = Router();
   const { client } = options;
-  // One limiter for every route that calls Gemini; one /news request is two calls.
+  // One limiter for every route that calls Gemini. A /news request is seven calls (six searches and a classify),
+  // so it also has its own hourly limit.
   const ai = [limiter(60_000, options.aiLimits.perMinute), limiter(3_600_000, options.aiLimits.perHour)];
+  const newsLimit = limiter(3_600_000, options.aiLimits.newsPerHour, "news");
   const needKey: RequestHandler = (_req, res, next) => {
     if (client) next();
     else res.status(503).json({ error: "The AI feature needs a Gemini key" });
@@ -118,7 +124,7 @@ export function riskRouter(dataset: Dataset, options: RiskOptions) {
   }
 
   router.get("/status", (_req, res) => {
-    res.json({ aiAvailable: client !== null });
+    res.json({ aiAvailable: client !== null, demo: options.demo === true });
   });
 
   // The curated list for the past-event picker, which also works without a key.
@@ -150,7 +156,8 @@ export function riskRouter(dataset: Dataset, options: RiskOptions) {
     }
   });
 
-  router.post("/news", needKey, ...ai, async (req, res) => {
+  // The news cap is checked first, so a request it refuses doesn't also use up the shared AI budget.
+  router.post("/news", needKey, newsLimit, ...ai, async (req, res) => {
     const today = options.today();
     const body = newsBody(today).safeParse(req.body);
     if (!body.success) {
@@ -162,9 +169,11 @@ export function riskRouter(dataset: Dataset, options: RiskOptions) {
     let step: "search" | "classify" = "search";
     try {
       const found = await search(client as Client, body.data.materials, body.data.needMonths, monthFromNumber(today), signal);
+      for (const f of found.failures) console.error(JSON.stringify({ route: "news", step: "search", ...f, ms: Date.now() - started }));
       step = "classify";
-      const developments = await classify(client as Client, found, body.data.materials, signal);
-      res.json({ newsId: keep(developments), developments });
+      const developments = await classify(client as Client, found.developments, body.data.materials, signal);
+      // Which areas were searched, so the page can say what was checked and found nothing, or couldn't be checked.
+      res.json({ newsId: keep(developments), areas: found.areas, developments });
     } catch (err) {
       log("news", started, err);
       res.status(502).json({ error: GENERIC.news, step });

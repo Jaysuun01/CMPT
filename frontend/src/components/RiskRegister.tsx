@@ -1,7 +1,7 @@
 // The per-material details under "The details behind it".
 import { useRef } from "react";
 import { pct, swing } from "@/lib/format";
-import { dollars, monthLabel, type Analysis, type Development, type MaterialResult, type PastEventOption } from "@/lib/risk";
+import { AREAS, dollars, monthLabel, type Analysis, type Areas, type Development, type MaterialResult, type PastEventOption } from "@/lib/risk";
 import { BreakEvenStrip } from "./BreakEvenStrip";
 import { Outlook } from "./Outlook";
 
@@ -19,6 +19,7 @@ const RISK = {
 const TOPIC: Record<Development["topic"], string> = {
   trade: "Tariffs and trade",
   shipping: "Shipping and freight",
+  weather: "Weather and disasters",
   conflict: "Conflicts and geopolitics",
   energy: "Energy",
   labor: "Labor",
@@ -31,7 +32,10 @@ const list = (xs: string[]) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1)
 
 /** The news check's state for the whole page: off (no key), loading, failed (and at which step), or the items. */
 export type NewsState =
-  { state: "off" } | { state: "loading" } | { state: "failed"; step: "search" | "classify" | "other" } | { state: "ok"; developments: Development[] };
+  | { state: "off" }
+  | { state: "loading" }
+  | { state: "failed"; step: "search" | "classify" | "other" }
+  | { state: "ok"; developments: Development[]; areas: Areas };
 
 /** Why the news isn't shown, for the whole page, or null when it is. */
 export function newsNote(news: NewsState): string | null {
@@ -253,13 +257,47 @@ interface NewsProps {
   events: PastEventOption[];
 }
 
+/** What was searched for this material and found nothing, and any area whose search couldn't run, so nothing is silently missing. */
+function Checked({ own, areas }: { own: Development[]; areas: Areas }) {
+  const lead = own.length > 0 ? "Also checked, nothing current found" : "Checked, nothing current found";
+  // In the same order as the topic headings above.
+  const searched = (Object.keys(TOPIC) as Development["topic"][]).filter((t): t is (typeof AREAS)[number] => (AREAS as readonly string[]).includes(t));
+  const label = (a: (typeof AREAS)[number]) => TOPIC[a].toLowerCase();
+  const quiet = searched.filter((a) => areas[a] === "ok" && !own.some((d) => d.topic === a)).map(label);
+  const failed = searched.filter((a) => areas[a] === "failed").map(label);
+  return (
+    <>
+      {quiet.length > 0 && (
+        <p className="note">
+          {lead}: {quiet.join(", ")}.
+        </p>
+      )}
+      {failed.length > 0 && <p className="note">Couldn&apos;t be checked this time: {failed.join(", ")}. Run the check again to retry.</p>}
+    </>
+  );
+}
+
 /** One material's current risk factors, grouped by topic. The page explains once when there's no news at all. */
 function News({ material, name, news, dismissed, onDismiss, events }: NewsProps) {
   if (news.state !== "ok") return null;
   const own = news.developments.filter((d) => d.material === material);
   const shown = own.filter((d) => !dismissed.has(d.devId));
-  if (own.length === 0) return <p>No current risk factors found in the news.</p>;
-  if (shown.length === 0) return <p className="note">You dismissed every development.</p>;
+  if (own.length === 0) {
+    return (
+      <>
+        <p>No current risk factors found in the news.</p>
+        <Checked own={own} areas={news.areas} />
+      </>
+    );
+  }
+  if (shown.length === 0) {
+    return (
+      <>
+        <p className="note">You dismissed every development.</p>
+        <Checked own={own} areas={news.areas} />
+      </>
+    );
+  }
   return (
     <div className="news-list" role="region" aria-label={`Current risk factors for ${name}`}>
       {(Object.keys(TOPIC) as Development["topic"][])
@@ -296,6 +334,7 @@ function News({ material, name, news, dismissed, onDismiss, events }: NewsProps)
             </ul>
           </section>
         ))}
+      <Checked own={own} areas={news.areas} />
       <p className="note">Figures in a summary are quoted from the news, not from this analysis.</p>
     </div>
   );

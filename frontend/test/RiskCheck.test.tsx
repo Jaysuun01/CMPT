@@ -14,10 +14,10 @@ let calls: { path: string; body: unknown }[];
 beforeEach(() => {
   calls = [];
   routes = {
-    status: () => ({ body: { aiAvailable: true } }),
+    status: () => ({ body: { aiAvailable: true, demo: false } }),
     events: () => ({ body: { events: EVENTS } }),
     extract: () => ({ body: EXTRACTED }),
-    news: () => ({ body: { newsId: NEWS_ID, developments: [DEV] } }),
+    news: () => ({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [DEV] } }),
     analyze: () => ({ body: analysis() }),
     drivers: () => ({ body: { drivers: DRIVERS } }),
     advise: () => ({ body: { advice: [ADVICE] } }),
@@ -51,6 +51,7 @@ const EXTRACTED = {
   ],
 };
 const NEWS_ID = "a".repeat(32);
+const AREAS_OK = { trade: "ok", shipping: "ok", energy: "ok", weather: "ok", production: "ok", conflict: "ok" };
 const ADVICE = {
   material: "steel",
   action: "lock-supply",
@@ -159,7 +160,7 @@ async function run(user: ReturnType<typeof userEvent.setup>, carrying = "2") {
 
 describe("RiskCheck without a key", () => {
   it("explains the key, skips the description box and runs from the form", async () => {
-    routes.status = () => ({ body: { aiAvailable: false } });
+    routes.status = () => ({ body: { aiAvailable: false, demo: false } });
     const user = userEvent.setup();
     render(<RiskCheck />);
     expect(await screen.findByText(/need a Gemini key/)).toBeInTheDocument();
@@ -288,7 +289,7 @@ describe("RiskCheck with the AI", () => {
     await describeAndRead(user);
     await run(user);
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Closest past event" })).toHaveValue("steel-232-2018"), { timeout: SLOW });
-    routes.news = () => ({ body: { newsId: NEWS_ID, developments: [{ ...DEV, eventId: "financial-crisis-2008" }] } });
+    routes.news = () => ({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [{ ...DEV, eventId: "financial-crisis-2008" }] } });
     await editDetails(user);
     let second = screen.getAllByLabelText(/need month$/)[1] as HTMLElement;
     await user.clear(second);
@@ -297,7 +298,7 @@ describe("RiskCheck with the AI", () => {
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Closest past event" })).toHaveValue("financial-crisis-2008"), { timeout: SLOW });
 
     await user.selectOptions(screen.getByRole("combobox", { name: "Closest past event" }), "none");
-    routes.news = () => ({ body: { newsId: NEWS_ID, developments: [DEV] } });
+    routes.news = () => ({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [DEV] } });
     await editDetails(user);
     second = screen.getAllByLabelText(/need month$/)[1] as HTMLElement;
     await user.clear(second);
@@ -343,6 +344,8 @@ describe("RiskCheck with the AI", () => {
     // The advice above was written with that news, so it says so instead of re-running on its own.
     expect(screen.getByText(/This advice was written before you dismissed news or changed a past event/)).toBeInTheDocument();
     expect(within(register("Iron and steel")).getByText("You dismissed every development.")).toBeInTheDocument();
+    // What was searched is still shown, so a dismissed page never hides an area that couldn't be checked.
+    expect(within(register("Iron and steel")).getByText(/^Also checked, nothing current found:/)).toBeInTheDocument();
     expect(within(register("Iron and steel")).getByRole("heading", { name: "What's different now" })).toHaveFocus();
     expect(calls.length).toBe(before);
   });
@@ -385,7 +388,7 @@ describe("RiskCheck with the AI", () => {
   });
 
   it("rejects a news reply with a non-https source", async () => {
-    routes.news = () => ({ body: { newsId: NEWS_ID, developments: [{ ...DEV, sources: [{ url: "javascript:alert(1)", title: "x" }] }] } });
+    routes.news = () => ({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [{ ...DEV, sources: [{ url: "javascript:alert(1)", title: "x" }] }] } });
     const user = userEvent.setup();
     await describeAndRead(user);
     await run(user);
@@ -394,7 +397,7 @@ describe("RiskCheck with the AI", () => {
   });
 
   it("says when no news was found for a material", async () => {
-    routes.news = () => ({ body: { newsId: NEWS_ID, developments: [] } });
+    routes.news = () => ({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [] } });
     const user = userEvent.setup();
     await describeAndRead(user);
     await run(user);
@@ -436,7 +439,7 @@ describe("RiskCheck with the AI", () => {
 
 describe("RiskCheck form problems", () => {
   it("lists problems found before sending, and sends nothing", async () => {
-    routes.status = () => ({ body: { aiAvailable: false } });
+    routes.status = () => ({ body: { aiAvailable: false, demo: false } });
     const user = userEvent.setup();
     render(<RiskCheck />);
     await screen.findByText(/need a Gemini key/);
@@ -470,7 +473,7 @@ describe("RiskCheck form problems", () => {
 describe("RiskRegister states", () => {
   async function show(result: ReturnType<typeof steel>) {
     routes.analyze = () => ({ body: analysis([result]) });
-    routes.news = () => ({ body: { newsId: NEWS_ID, developments: [] } });
+    routes.news = () => ({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [] } });
     const user = userEvent.setup();
     await describeAndRead(user);
     await run(user);
@@ -537,7 +540,7 @@ describe("RiskRegister states", () => {
 
 describe("RiskCheck renders model text as plain text", () => {
   it("never turns a summary into markup", async () => {
-    routes.news = () => ({ body: { newsId: NEWS_ID, developments: [{ ...DEV, summary: "<img src=x onerror=alert(1)> steel news" }] } });
+    routes.news = () => ({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [{ ...DEV, summary: "<img src=x onerror=alert(1)> steel news" }] } });
     const user = userEvent.setup();
     await describeAndRead(user);
     await run(user);
@@ -692,9 +695,11 @@ describe("Current risk factors by topic", () => {
     routes.news = () => ({
       body: {
         newsId: NEWS_ID,
+        areas: AREAS_OK,
         developments: [
           { ...DEV, devId: 1, topic: "production" },
           { ...DEV, devId: 2, summary: "New duties on imported steel.", topic: "trade" },
+          { ...DEV, devId: 3, summary: "A hurricane shut a Gulf Coast mill.", topic: "weather" },
         ],
       },
     });
@@ -703,14 +708,14 @@ describe("Current risk factors by topic", () => {
     await run(user);
     await within(newsBlock()).findByText("New duties on imported steel.", { selector: "p" }, { timeout: SLOW });
     const headings = within(newsBlock()).getAllByRole("heading", { level: 5 }).map((h) => h.textContent);
-    expect(headings).toEqual(["Tariffs and trade", "Production and capacity"]);
+    expect(headings).toEqual(["Tariffs and trade", "Weather and disasters", "Production and capacity"]);
     const trade = within(newsBlock()).getByRole("region", { name: "Tariffs and trade" });
     expect(within(trade).getByText("New duties on imported steel.", { selector: "p" })).toBeInTheDocument();
     expect(within(trade).queryByText("Mills report longer steel lead times.", { selector: "p" })).toBeNull();
   });
 
   it("rejects a development with an unknown topic", async () => {
-    routes.news = () => ({ body: { newsId: NEWS_ID, developments: [{ ...DEV, topic: "weather" }] } });
+    routes.news = () => ({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [{ ...DEV, topic: "astrology" }] } });
     const user = userEvent.setup();
     await describeAndRead(user);
     await run(user);
@@ -789,7 +794,7 @@ describe("Results appear all at once", () => {
     expect(screen.queryByRole("article")).toBeNull();
     expect(screen.queryByRole("region", { name: "Energy and freight costs" })).toBeNull();
 
-    releaseNews({ body: { newsId: NEWS_ID, developments: [DEV] } });
+    releaseNews({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [DEV] } });
     expect(await screen.findByRole("article", { name: /Iron and steel/ }, { timeout: SLOW })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Energy and freight costs" })).toBeInTheDocument();
     expect(screen.queryByText(/Running the check\./)).toBeNull();
@@ -827,7 +832,7 @@ describe("Results appear all at once", () => {
     await waitFor(() => expect(screen.getByText(/Loading energy and freight costs/).closest("li")).toHaveClass("is-done"));
     expect(screen.getByText(/Comparing today with similar past periods/).closest("li")).not.toHaveClass("is-done");
     expect(screen.queryByText("The analysis couldn't run. Please try again.")).toBeNull();
-    releaseNews({ body: { newsId: NEWS_ID, developments: [DEV] } });
+    releaseNews({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [DEV] } });
     expect(await screen.findByText("The analysis couldn't run. Please try again.", {}, { timeout: SLOW })).toBeInTheDocument();
     expect(screen.queryByText(/Running the check\./)).toBeNull();
     expect(screen.queryByRole("article")).toBeNull();
@@ -835,7 +840,7 @@ describe("Results appear all at once", () => {
   });
 
   it("lists only the parts that run: no news line without a key", async () => {
-    routes.status = () => ({ body: { aiAvailable: false } });
+    routes.status = () => ({ body: { aiAvailable: false, demo: false } });
     let release: (v: { body: unknown }) => void = () => {};
     routes.analyze = () => new Promise((r) => (release = r));
     const user = userEvent.setup();
@@ -913,7 +918,7 @@ describe("Should you buy now?", () => {
 
   it("shows only undismissed news when the AI cites none, and says when a material has no news", async () => {
     routes.analyze = () => ({ body: analysis([steel(), steel({ material: "lumber", name: "Lumber and wood", seriesId: "WPU08" })]) });
-    routes.news = () => ({ body: { newsId: NEWS_ID, developments: [DEV, { ...DEV, devId: 2, summary: "Scrap prices eased.", sources: [{ url: "https://other.example.com/a", title: "Other" }] }] } });
+    routes.news = () => ({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [DEV, { ...DEV, devId: 2, summary: "Scrap prices eased.", sources: [{ url: "https://other.example.com/a", title: "Other" }] }] } });
     routes.advise = () => ({
       body: {
         advice: [
@@ -958,7 +963,7 @@ describe("Should you buy now?", () => {
       ["limit", () => (routes.advise = () => ({ status: 429, body: { error: "Too many requests" } })), /AI request limit was reached/],
       ["expired", () => (routes.advise = () => ({ status: 409, body: { error: "x" } })), /news check expired/],
       ["news failed", () => (routes.news = () => ({ status: 502, body: { error: "News couldn't be checked.", step: "classify" } })), /because the news couldn't be checked/],
-      ["no news", () => (routes.news = () => ({ body: { newsId: NEWS_ID, developments: [] } })), /no current news to weigh/],
+      ["no news", () => (routes.news = () => ({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [] } })), /no current news to weigh/],
     ];
     for (const [name, setup, message] of cases) {
       calls = [];
@@ -971,13 +976,13 @@ describe("Should you buy now?", () => {
       expect(item(), name).toHaveTextContent("Moderate evidence");
       expect(item(), name).not.toHaveTextContent(/AI reading|supply risk|booking supply/);
       cleanup();
-      routes.news = () => ({ body: { newsId: NEWS_ID, developments: [DEV] } });
+      routes.news = () => ({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [DEV] } });
       routes.advise = () => ({ body: { advice: [ADVICE] } });
     }
   });
 
   it("makes no advice call when there's no news, and without a key", async () => {
-    routes.news = () => ({ body: { newsId: NEWS_ID, developments: [] } });
+    routes.news = () => ({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [] } });
     const user = userEvent.setup();
     await describeAndRead(user);
     await run(user);
@@ -997,7 +1002,7 @@ describe("Should you buy now?", () => {
   });
 
   it("marks the advice stale after a dismissal, and Refresh re-runs it without that news", async () => {
-    routes.news = () => ({ body: { newsId: NEWS_ID, developments: [DEV, { ...DEV, devId: 2, summary: "Scrap prices eased." }] } });
+    routes.news = () => ({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [DEV, { ...DEV, devId: 2, summary: "Scrap prices eased." }] } });
     const user = userEvent.setup();
     await describeAndRead(user);
     await run(user);
@@ -1203,6 +1208,7 @@ describe("News and advice limits from the backend contract", () => {
     routes.news = () => ({
       body: {
         newsId: NEWS_ID,
+        areas: AREAS_OK,
         developments: [DEV, { ...DEV, devId: 2, summary: "Rebar allocation tightened.", sources: [{ url: "https://news.example.com/rebar", title: "Another title" }] }],
       },
     });
@@ -1215,7 +1221,7 @@ describe("News and advice limits from the backend contract", () => {
   });
 
   it("accepts a summary of 300 characters counted as the backend counts them, even with emoji", async () => {
-    routes.news = () => ({ body: { newsId: NEWS_ID, developments: [{ ...DEV, summary: "🚢".repeat(300) }] } });
+    routes.news = () => ({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [{ ...DEV, summary: "🚢".repeat(300) }] } });
     const user = userEvent.setup();
     await describeAndRead(user);
     await run(user);
@@ -1224,7 +1230,7 @@ describe("News and advice limits from the backend contract", () => {
 
   it("rejects a news reply with more than 5 sources on one item", async () => {
     const six = Array.from({ length: 6 }, (_, i) => ({ url: `https://s${i}.example.com/`, title: `S${i}` }));
-    routes.news = () => ({ body: { newsId: NEWS_ID, developments: [{ ...DEV, sources: six }] } });
+    routes.news = () => ({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [{ ...DEV, sources: six }] } });
     const user = userEvent.setup();
     await describeAndRead(user);
     await run(user);
@@ -1329,10 +1335,79 @@ describe("The project form", () => {
   });
 
   it("rejects a news source whose link isn't a URL at all", async () => {
-    routes.news = () => ({ body: { newsId: NEWS_ID, developments: [{ ...DEV, sources: [{ url: "not a url", title: "x" }] }] } });
+    routes.news = () => ({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [{ ...DEV, sources: [{ url: "not a url", title: "x" }] }] } });
     const user = userEvent.setup();
     await describeAndRead(user);
     await run(user);
     expect(await screen.findByText(/^News couldn't be checked\./, {}, { timeout: SLOW })).toBeInTheDocument();
+  });
+});
+
+describe("What the news search checked", () => {
+  it("lists the areas checked with nothing found for each material, so nothing is silently missing", async () => {
+    // The fixture's only news is a steel production item.
+    const user = userEvent.setup();
+    await describeAndRead(user);
+    await run(user);
+    expect(within(newsBlock()).getByText("Also checked, nothing current found: tariffs and trade, shipping and freight, weather and disasters, conflicts and geopolitics, energy.")).toBeInTheDocument();
+  });
+
+  it("names any area whose search couldn't run", async () => {
+    routes.news = () => ({ body: { newsId: NEWS_ID, areas: { ...AREAS_OK, weather: "failed" }, developments: [DEV] } });
+    const user = userEvent.setup();
+    await describeAndRead(user);
+    await run(user);
+    expect(within(newsBlock()).getByText(/^Couldn't be checked this time: weather and disasters\. Run the check again to retry\.$/)).toBeInTheDocument();
+    expect(within(newsBlock()).getByText(/^Also checked, nothing current found:/)).not.toHaveTextContent("weather");
+  });
+
+  it("searches the news again on the next run when an area couldn't be checked, as the note promises", async () => {
+    routes.news = () => ({ body: { newsId: NEWS_ID, areas: { ...AREAS_OK, weather: "failed" }, developments: [DEV] } });
+    const user = userEvent.setup();
+    await describeAndRead(user);
+    await run(user);
+    routes.news = () => ({ body: { newsId: NEWS_ID, areas: AREAS_OK, developments: [DEV] } });
+    await run(user, "1.5");
+    expect(calls.filter((c) => c.path === "news")).toHaveLength(2);
+    expect(within(newsBlock()).queryByText(/Couldn't be checked/)).toBeNull();
+    // With every area checked, the same project isn't searched again.
+    await run(user, "1");
+    expect(calls.filter((c) => c.path === "news")).toHaveLength(2);
+  });
+
+  it("still says what was checked when a material has no news at all", async () => {
+    routes.analyze = () => ({ body: analysis([steel(), steel({ material: "lumber", name: "Lumber and wood", seriesId: "WPU08" })]) });
+    const user = userEvent.setup();
+    await describeAndRead(user);
+    await run(user);
+    const lumber = register("Lumber and wood");
+    expect(within(lumber).getByText("No current risk factors found in the news.")).toBeInTheDocument();
+    expect(within(lumber).getByText(/^Checked, nothing current found: tariffs and trade, shipping and freight, weather and disasters, conflicts and geopolitics, energy, production and capacity\.$/)).toBeInTheDocument();
+  });
+
+  it("rejects a news reply without the areas it checked", async () => {
+    routes.news = () => ({ body: { newsId: NEWS_ID, developments: [DEV] } });
+    const user = userEvent.setup();
+    await describeAndRead(user);
+    await run(user);
+    expect(await screen.findByText(/^News couldn't be checked\./, {}, { timeout: SLOW })).toBeInTheDocument();
+  });
+});
+
+describe("Demo mode", () => {
+  it("says the AI answers are samples, and fills in the sample project ready to read", async () => {
+    routes.status = () => ({ body: { aiAvailable: true, demo: true } });
+    render(<RiskCheck />);
+    expect(await screen.findByText(/The AI steps and the energy and freight costs use fixed sample data/)).toBeInTheDocument();
+    const box = screen.getByRole("textbox", { name: "Describe the project" });
+    expect((box as HTMLTextAreaElement).value).toMatch(/^A 3-building apartment complex/);
+    expect(screen.getByRole("button", { name: "Read the description" })).toBeEnabled();
+  });
+
+  it("says nothing about a demo with a real key", async () => {
+    render(<RiskCheck />);
+    await screen.findByRole("textbox", { name: "Describe the project" });
+    expect(screen.queryByText(/Demo mode/)).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Describe the project" })).toHaveValue("");
   });
 });

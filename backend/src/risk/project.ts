@@ -87,7 +87,7 @@ export function adviseBody(today: number) {
   return z.strictObject({
     project: analyzeBody(today),
     newsId: z.string().regex(/^[0-9a-f]{32}$/, "Run the check again"),
-    exclude: z.array(z.int().min(1).max(100)).max(15),
+    exclude: z.array(z.int().min(1).max(100)).max(30),
   });
 }
 

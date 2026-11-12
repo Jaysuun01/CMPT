@@ -8,7 +8,7 @@ import { monthNumber } from "./data/months.ts";
 import { CALL_TIMEOUT_MS, createModels, type Client } from "./risk/gemini.ts";
 import { fredSource, type DriverSource } from "./risk/drivers.ts";
 import { MOCK_TODAY, mockDrivers, mockModels } from "./risk/mock.ts";
-import { AI_LIMIT_PER_HOUR, AI_LIMIT_PER_MINUTE, riskRouter } from "./risk/routes.ts";
+import { AI_LIMIT_PER_HOUR, AI_LIMIT_PER_MINUTE, NEWS_LIMIT_PER_HOUR, riskRouter } from "./risk/routes.ts";
 
 // Everything reaches us through the frontend's /api proxy on this machine, so every request
 // arrives from 127.0.0.1. We deliberately do NOT trust X-Forwarded-For: the proxy passes a
@@ -74,8 +74,11 @@ export function createApp(dataset: Dataset, { env = process.env, now = () => new
     "/api/risk",
     riskRouter(dataset, {
       client,
+      demo: mock,
       today: mock ? () => monthNumber(MOCK_TODAY) : () => now().getFullYear() * 12 + now().getMonth(),
-      aiLimits: mock ? { perMinute: 1000, perHour: 10_000 } : { perMinute: AI_LIMIT_PER_MINUTE, perHour: AI_LIMIT_PER_HOUR },
+      aiLimits: mock
+        ? { perMinute: 1000, perHour: 10_000, newsPerHour: 10_000 }
+        : { perMinute: AI_LIMIT_PER_MINUTE, perHour: AI_LIMIT_PER_HOUR, newsPerHour: NEWS_LIMIT_PER_HOUR },
       newsTimeoutMs: timeouts?.newsMs,
       drivers: drivers ?? (mock ? mockDrivers : fredSource()),
     }),

@@ -1174,6 +1174,17 @@ abbr.p {
 .plan > h1:focus {
   outline: none;
 }
+.demo-note {
+  margin: 14px 0 0;
+  padding: 12px 16px;
+  max-width: 72ch;
+  border: 1px solid var(--steel);
+  border-left-width: 4px;
+  border-radius: 4px;
+  background: var(--brush);
+  font-size: 15px;
+  line-height: 1.5;
+}
 .results-nav {
   position: sticky;
   top: 0;

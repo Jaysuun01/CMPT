@@ -19,6 +19,8 @@ test("the header tab and the price page both lead to Plan a purchase", async ({ 
 
 test("AI happy path: describe, confirm, see the answer and the news", async ({ page }) => {
   await page.goto("/plan");
+  // Mock mode is the demo: the page says the AI answers are samples.
+  await expect(page.getByText(/^Demo mode:/)).toBeVisible();
   await page.getByRole("textbox", { name: "Describe the project" }).fill("Three buildings from March 2027: lumber $2M, concrete $800K, steel $200K.");
   await page.getByRole("button", { name: "Read the description" }).click();
 

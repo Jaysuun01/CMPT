@@ -25,7 +25,7 @@ const HttpsUrl = z.string().refine((s) => {
   }
 });
 
-const StatusSchema = z.strictObject({ aiAvailable: z.boolean() });
+const StatusSchema = z.strictObject({ aiAvailable: z.boolean(), demo: z.boolean() });
 const EventsSchema = z.strictObject({
   events: z.array(z.strictObject({ id: z.string().max(40), name: z.string().max(120), month: Month, materials: z.array(z.enum(MATERIALS)) })).max(20),
 });
@@ -46,10 +46,19 @@ const DevelopmentSchema = z.strictObject({
   sources: z.array(z.strictObject({ url: HttpsUrl, title: z.string().refine((s) => [...s].length <= 200) })).min(1).max(5),
   material: z.enum(MATERIALS),
   risk: z.enum(["price", "availability", "both"]),
-  topic: z.enum(["trade", "shipping", "conflict", "energy", "labor", "production", "other"]),
+  topic: z.enum(["trade", "shipping", "weather", "conflict", "energy", "labor", "production", "other"]),
   eventId: z.string().max(40),
 });
-const NewsSchema = z.strictObject({ newsId: z.string().regex(/^[0-9a-f]{32}$/), developments: z.array(DevelopmentSchema).max(15) });
+/** The areas the backend searches, one search each. Must match AREAS in backend/src/risk/gemini.ts. */
+export const AREAS = ["trade", "shipping", "energy", "weather", "production", "conflict"] as const;
+const AreaStatus = z.enum(["ok", "failed"]);
+const NewsSchema = z.strictObject({
+  newsId: z.string().regex(/^[0-9a-f]{32}$/),
+  areas: z.strictObject(Object.fromEntries(AREAS.map((a) => [a, AreaStatus])) as Record<(typeof AREAS)[number], typeof AreaStatus>),
+  developments: z.array(DevelopmentSchema).max(30),
+});
+/** Whether each area's search ran ("ok") or couldn't ("failed"). */
+export type Areas = z.infer<typeof NewsSchema>["areas"];
 /** One classified news item, with its source links. */
 export type Development = z.infer<typeof DevelopmentSchema>;
 
