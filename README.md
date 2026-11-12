@@ -225,4 +225,5 @@ I built this with Claude Code. It assisted me on:
 - Adding more materials.
 - Optimize the LLM to sharpen its response and accuracy. 
 
-
+## Demo Video
+https://drive.google.com/file/d/12cYKN7eNOHdASIJp1TRnV-xnYBnSpx3I/view?usp=sharing
